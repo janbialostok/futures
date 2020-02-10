@@ -67,7 +67,7 @@ func main() {
 	}, func(v interface{}) (interface{}, error) {
 		time.Sleep(1 * time.Second)
 		return v.(int) * 2, nil
-	}, 3)
+	}, 1)
 
 	v := <-a
 	fmt.Println(fmt.Sprintf("%#v", v.Data))

@@ -87,12 +87,11 @@ func Pipe(fns ...ThenableFunc) func(interface{}) Future {
 	}
 }
 
-func resolveSliceValuesFromWorkerPool(length int, wp WorkerPool) Future {
+func resolveSliceValuesFromWorkerPool(length int, wp WorkerPoolInterface) Future {
 	return NewFuture(func() (interface{}, error) {
 		index := 0
 		result := make([]interface{}, length)
 		for {
-			defer wp.Close()
 			if v, ok := wp.Receive(); ok && v.Error == nil {
 				result[index] = v.Data
 				index++
@@ -107,43 +106,45 @@ func resolveSliceValuesFromWorkerPool(length int, wp WorkerPool) Future {
 	})
 }
 
-func AllWithWorkerPool(values []interface{}, wp WorkerPool) Future {
+func AllWithWorkerPool(values []interface{}, concurrency int, wp WorkerPoolInterface) Future {
+	np := wp.Fork(concurrency)
 	for _, v := range values {
 		switch f := v.(type) {
 		case Future:
-			wp.Send(func() (interface{}, error) {
+			np.Send(func() (interface{}, error) {
 				value := <-f
 				return value.Data, value.Error
 			})
 			break
 		case FutureFunc:
-			wp.Send(f)
+			np.Send(f)
 			break
 		default:
-			wp.Send(func() (interface{}, error) {
+			np.Send(func() (interface{}, error) {
 				return f, nil
 			})
 		}
 	}
-	return resolveSliceValuesFromWorkerPool(len(values), wp)
+	return resolveSliceValuesFromWorkerPool(len(values), np)
 }
 
 func All(values []interface{}, concurrency int) Future {
 	wp := NewFuturesWorkerPool(concurrency)
-	return AllWithWorkerPool(values, wp)
+	return AllWithWorkerPool(values, concurrency, wp)
 }
 
-func MapWithWorkerPool(values []interface{}, fn ThenableFunc, wp WorkerPool) Future {
+func MapWithWorkerPool(values []interface{}, fn ThenableFunc, concurrency int, wp WorkerPoolInterface) Future {
+	np := wp.Fork(concurrency)
 	for _, v := range values {
 		curr := v
-		wp.Send(func() (interface{}, error) {
+		np.Send(func() (interface{}, error) {
 			return fn(curr)
 		})
 	}
-	return resolveSliceValuesFromWorkerPool(len(values), wp)
+	return resolveSliceValuesFromWorkerPool(len(values), np)
 }
 
 func Map(values []interface{}, fn ThenableFunc, concurrency int) Future {
 	wp := NewFuturesWorkerPool(concurrency)
-	return MapWithWorkerPool(values, fn, wp)
+	return MapWithWorkerPool(values, fn, concurrency, wp)
 }

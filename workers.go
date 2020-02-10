@@ -4,6 +4,8 @@ import (
 	"sync"
 )
 
+type skipProduceValue struct{}
+
 func makeWorker(in chan FutureFunc, out chan Value, kill chan bool) {
 	go func() {
 	worker:
@@ -18,28 +20,30 @@ func makeWorker(in chan FutureFunc, out chan Value, kill chan bool) {
 			fn := <-in
 			if fn != nil {
 				result, err := fn()
-				out <- Value{result, err}
+				if _, ok := result.(skipProduceValue); !ok {
+					out <- Value{result, err}
+				}
 			}
 		}
 	}()
 }
 
-// WorkerPool defines methods implemented by structs WP and NestedWP. These combined functionalities allow of asynchronous execution of FutureFuncs.
-type WorkerPool interface {
+// WorkerPoolInterface defines methods implemented by structs WorkerPool and NestedWorkerPool. These combined functionalities allow of asynchronous execution of FutureFuncs.
+type WorkerPoolInterface interface {
 	Send(FutureFunc) bool
 	Receive() (Value, bool)
 	Close() bool
-	Fork(int) WorkerPool
+	Fork(int) WorkerPoolInterface
 }
 
-type WP struct {
+type WorkerPool struct {
 	in        chan FutureFunc
 	out       Future
 	kill      chan bool
 	closeLock *sync.Mutex
 }
 
-func (w WP) Send(fn FutureFunc) bool {
+func (w WorkerPool) Send(fn FutureFunc) bool {
 	select {
 	case _, ok := <-w.kill:
 		if !ok {
@@ -51,14 +55,14 @@ func (w WP) Send(fn FutureFunc) bool {
 	return true
 }
 
-func (w WP) Receive() (Value, bool) {
+func (w WorkerPool) Receive() (Value, bool) {
 	if v, ok := <-w.out; ok {
 		return v, true
 	}
 	return Value{}, false
 }
 
-func (w WP) Close() bool {
+func (w WorkerPool) Close() bool {
 	w.closeLock.Lock()
 	defer w.closeLock.Unlock()
 	select {
@@ -73,11 +77,39 @@ func (w WP) Close() bool {
 	return true
 }
 
-func (w WP) Fork(concurrency int) WorkerPool {
-
+func (w WorkerPool) Fork(concurrency int) WorkerPoolInterface {
+	out := make(chan Value, concurrency)
+	return NestedWorkerPool{
+		WorkerPool: WorkerPool{
+			in:        w.in,
+			kill:      w.kill,
+			closeLock: w.closeLock,
+		},
+		out: out,
+	}
 }
 
-func NewFuturesWorkerPool(concurrency int) WorkerPool {
+type NestedWorkerPool struct {
+	WorkerPool
+	out chan Value
+}
+
+func (n NestedWorkerPool) Send(fn FutureFunc) bool {
+	return n.WorkerPool.Send(func() (interface{}, error) {
+		result, err := fn()
+		n.out <- Value{result, err}
+		return skipProduceValue{}, err
+	})
+}
+
+func (n NestedWorkerPool) Receive() (Value, bool) {
+	if v, ok := <-n.out; ok {
+		return v, true
+	}
+	return Value{}, false
+}
+
+func NewFuturesWorkerPool(concurrency int) WorkerPoolInterface {
 	in := make(chan FutureFunc, concurrency)
 	out := make(chan Value, concurrency)
 	kill := make(chan bool)
@@ -93,5 +125,5 @@ func NewFuturesWorkerPool(concurrency int) WorkerPool {
 		makeWorker(in, out, kill)
 	}
 
-	return WP{in, out, kill, &closeChannelLock}
+	return WorkerPool{in, out, kill, &closeChannelLock}
 }
