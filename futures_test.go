@@ -149,6 +149,9 @@ func TestAll(t *testing.T) {
 
 	result = <-All(values, 3)
 	assert.Error(t, result.Error, "should resolve with an error if any Future's or FutureFunc's return an error")
+
+	result = <-All([]interface{}{}, 3)
+	assert.Empty(t, result.Data.([]interface{}), "should handle empty input values")
 }
 
 func TestMap(t *testing.T) {
@@ -161,4 +164,9 @@ func TestMap(t *testing.T) {
 	}, 2)
 
 	assert.ElementsMatch(t, []interface{}{2, 4, 6}, result.Data.([]interface{}), "should map over values with ThenableFunc")
+
+	result = <-Map([]interface{}{"foobar"}, func(value interface{}) (interface{}, error) {
+		return nil, fmt.Errorf("some error")
+	}, 1)
+	assert.Error(t, result.Error, "should resolve with an error if any Future's or FutureFunc's return an error")
 }

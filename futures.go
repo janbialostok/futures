@@ -107,6 +107,9 @@ func resolveSliceValuesFromWorkerPool(length int, wp WorkerPoolInterface) Future
 		defer wp.Close()
 		index := 0
 		result := make([]interface{}, length)
+		if length == 0 {
+			return result, nil
+		}
 		for {
 			if v, ok := wp.Receive(); ok && v.Error == nil {
 				result[index] = v.Data
@@ -151,7 +154,15 @@ func AllWithWorkerPool(values []interface{}, concurrency int, wp WorkerPoolInter
 // All calls AllWithWorkerPool but first creates a new WorkerPool with the specified concurrency
 func All(values []interface{}, concurrency int) Future {
 	wp := NewFuturesWorkerPool(concurrency)
-	return AllWithWorkerPool(values, concurrency, wp)
+	return AllWithWorkerPool(values, concurrency, wp).
+		Then(func(value interface{}) (interface{}, error) {
+			defer wp.Close()
+			return value, nil
+		}).
+		Catch(func(err error) (interface{}, error) {
+			defer wp.Close()
+			return nil, err
+		})
 }
 
 // MapWithWorkerPool calls the defined fn Thenabled argument with each of the values provided in the values arugment and returns a Future that will resolve with the resulting values. The provided WorkerPool is forked and closed at the end of execution.
@@ -169,5 +180,13 @@ func MapWithWorkerPool(values []interface{}, fn ThenableFunc, concurrency int, w
 // Map calls MapWithWorkerPool but first creates a WorkerPool with the specified concurrency
 func Map(values []interface{}, fn ThenableFunc, concurrency int) Future {
 	wp := NewFuturesWorkerPool(concurrency)
-	return MapWithWorkerPool(values, fn, concurrency, wp)
+	return MapWithWorkerPool(values, fn, concurrency, wp).
+		Then(func(value interface{}) (interface{}, error) {
+			defer wp.Close()
+			return value, nil
+		}).
+		Catch(func(err error) (interface{}, error) {
+			defer wp.Close()
+			return nil, err
+		})
 }
