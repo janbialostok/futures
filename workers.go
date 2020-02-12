@@ -1,10 +1,10 @@
-package main
+package futures
 
 import (
 	"sync"
 )
 
-type skipProduceValue struct{}
+type skipOutChannel struct{}
 
 func makeWorker(in chan FutureFunc, out chan Value, kill chan bool) {
 	go func() {
@@ -20,7 +20,7 @@ func makeWorker(in chan FutureFunc, out chan Value, kill chan bool) {
 			fn := <-in
 			if fn != nil {
 				result, err := fn()
-				if _, ok := result.(skipProduceValue); !ok {
+				if _, ok := result.(skipOutChannel); !ok {
 					out <- Value{result, err}
 				}
 			}
@@ -34,8 +34,10 @@ type WorkerPoolInterface interface {
 	Receive() (Value, bool)
 	Close() bool
 	Fork(int) WorkerPoolInterface
+	Do(chan Value, FutureFunc) bool
 }
 
+// WorkerPool manages go routines used for executing FutureFuncs
 type WorkerPool struct {
 	in        chan FutureFunc
 	out       Future
@@ -43,6 +45,7 @@ type WorkerPool struct {
 	closeLock *sync.Mutex
 }
 
+// Send pushes a FutureFunc to a channel that worker go routines poll and execute from
 func (w WorkerPool) Send(fn FutureFunc) bool {
 	select {
 	case _, ok := <-w.kill:
@@ -55,6 +58,7 @@ func (w WorkerPool) Send(fn FutureFunc) bool {
 	return true
 }
 
+// Receive listens on the out channel and waits for a value to be returned from a FutureFunc execution
 func (w WorkerPool) Receive() (Value, bool) {
 	if v, ok := <-w.out; ok {
 		return v, true
@@ -62,6 +66,7 @@ func (w WorkerPool) Receive() (Value, bool) {
 	return Value{}, false
 }
 
+// Close kills all worker go routines and closes in and out channels
 func (w WorkerPool) Close() bool {
 	w.closeLock.Lock()
 	defer w.closeLock.Unlock()
@@ -77,31 +82,58 @@ func (w WorkerPool) Close() bool {
 	return true
 }
 
+// Fork creates a NestedWorkerPool from parent WorkerPool which shares an in channel and worker go routines
 func (w WorkerPool) Fork(concurrency int) WorkerPoolInterface {
 	out := make(chan Value, concurrency)
+	kill := make(chan bool)
+	go func() {
+		select {
+		case <-kill:
+			close(out)
+		case <-w.kill:
+			close(out)
+		}
+	}()
 	return NestedWorkerPool{
 		WorkerPool: WorkerPool{
 			in:        w.in,
 			kill:      w.kill,
 			closeLock: w.closeLock,
 		},
-		out: out,
+		out:  out,
+		kill: kill,
 	}
 }
 
-type NestedWorkerPool struct {
-	WorkerPool
-	out chan Value
-}
-
-func (n NestedWorkerPool) Send(fn FutureFunc) bool {
-	return n.WorkerPool.Send(func() (interface{}, error) {
+// Do executes a FutureFunc in a worker go routine but writes the returned value to the specified out channel
+func (w WorkerPool) Do(out chan Value, fn FutureFunc) bool {
+	return w.Send(func() (interface{}, error) {
 		result, err := fn()
-		n.out <- Value{result, err}
-		return skipProduceValue{}, err
+		out <- Value{result, err}
+		return skipOutChannel{}, nil
 	})
 }
 
+// NestedWorkerPool shares resources with a parent WorkerPool but can be indepedently closed and only receives values directly sent to it
+type NestedWorkerPool struct {
+	WorkerPool
+	out  chan Value
+	kill chan bool
+}
+
+// Send pushes a FutureFunc to a parent WorkerPool but writes the result to the nested out channel
+func (n NestedWorkerPool) Send(fn FutureFunc) bool {
+	select {
+	case _, ok := <-n.kill:
+		if !ok {
+			return false
+		}
+	default:
+	}
+	return n.WorkerPool.Do(n.out, fn)
+}
+
+// Receive listens on the out channel and waits for a value to be returned from a FutureFunc execution
 func (n NestedWorkerPool) Receive() (Value, bool) {
 	if v, ok := <-n.out; ok {
 		return v, true
@@ -109,6 +141,42 @@ func (n NestedWorkerPool) Receive() (Value, bool) {
 	return Value{}, false
 }
 
+// Close closes nested out channel and blocks any subsequent writes to the parent in channel. Closing will not effect parent WorkerPool resources
+func (n NestedWorkerPool) Close() bool {
+	n.closeLock.Lock()
+	defer n.closeLock.Unlock()
+	select {
+	case _, ok := <-n.WorkerPool.kill:
+		if !ok {
+			return false
+		}
+	default:
+	}
+	select {
+	case _, ok := <-n.kill:
+		if !ok {
+			return false
+		}
+	default:
+	}
+	n.kill <- true
+	close(n.kill)
+	return true
+}
+
+// Do executes a FutureFunc in a parent worker go routine but writes the returned value to the specified out channel
+func (n NestedWorkerPool) Do(out chan Value, fn FutureFunc) bool {
+	select {
+	case _, ok := <-n.kill:
+		if !ok {
+			return false
+		}
+	default:
+	}
+	return n.WorkerPool.Do(out, fn)
+}
+
+// NewFuturesWorkerPool creates a WorkerPool with the specified number of workers as define by the concurrency argument
 func NewFuturesWorkerPool(concurrency int) WorkerPoolInterface {
 	in := make(chan FutureFunc, concurrency)
 	out := make(chan Value, concurrency)
