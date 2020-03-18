@@ -131,19 +131,19 @@ func AllWithWorkerPool(values []interface{}, concurrency int, wp WorkerPoolInter
 	for _, v := range values {
 		switch f := v.(type) {
 		case Future:
-			np.Send(func() (interface{}, error) {
+			go np.Send(func() (interface{}, error) {
 				value := <-f
 				return value.Data, value.Error
 			})
 			break
 		case FutureFunc:
-			np.Send(f)
+			go np.Send(f)
 			break
 		case func() (interface{}, error):
-			np.Send(f)
+			go np.Send(f)
 			break
 		default:
-			np.Send(func() (interface{}, error) {
+			go np.Send(func() (interface{}, error) {
 				return f, nil
 			})
 		}
@@ -170,7 +170,7 @@ func MapWithWorkerPool(values []interface{}, fn ThenableFunc, concurrency int, w
 	np := wp.Fork(concurrency)
 	for _, v := range values {
 		curr := v
-		np.Send(func() (interface{}, error) {
+		go np.Send(func() (interface{}, error) {
 			return fn(curr)
 		})
 	}

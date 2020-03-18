@@ -159,11 +159,13 @@ func TestMap(t *testing.T) {
 		1,
 		2,
 		3,
+		4,
+		5,
 	}, func(value interface{}) (interface{}, error) {
 		return value.(int) * 2, nil
-	}, 2)
+	}, 1)
 
-	assert.ElementsMatch(t, []interface{}{2, 4, 6}, result.Data.([]interface{}), "should map over values with ThenableFunc")
+	assert.ElementsMatch(t, []interface{}{2, 4, 6, 8, 10}, result.Data.([]interface{}), "should map over values with ThenableFunc")
 
 	result = <-Map([]interface{}{"foobar"}, func(value interface{}) (interface{}, error) {
 		return nil, fmt.Errorf("some error")
