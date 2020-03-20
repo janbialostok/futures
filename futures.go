@@ -190,3 +190,14 @@ func Map(values []interface{}, fn ThenableFunc, concurrency int) Future {
 			return nil, err
 		})
 }
+
+// Co returns a Future that iterates through the provided Generator and resolves with the last yielded value
+func Co(generator Generator) Future {
+	return NewFuture(func() (interface{}, error) {
+		var last GeneratorValue
+		for v := range generator {
+			last = v
+		}
+		return last.Value, last.Error
+	})
+}

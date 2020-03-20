@@ -172,3 +172,12 @@ func TestMap(t *testing.T) {
 	}, 1)
 	assert.Error(t, result.Error, "should resolve with an error if any Future's or FutureFunc's return an error")
 }
+
+func TestCo(t *testing.T) {
+	generator := NewGenerator(func(n interface{}) (interface{}, bool, error) {
+		next := n.(int) + 1
+		return next, (next >= 5), nil
+	})
+	result := <-Co(generator(0))
+	assert.Equal(t, 5, result.Data, "should resolve the final value yielded from generator")
+}

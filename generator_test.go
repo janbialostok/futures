@@ -2,13 +2,14 @@ package futures
 
 import (
 	"testing"
+
 	"github.com/stretchr/testify/assert"
 )
 
 func TestNewGenerator(t *testing.T) {
 	factory := NewGenerator(func(n interface{}) (interface{}, bool, error) {
 		next := n.(int) + 1
-		return next, (next < 5), nil
+		return next, (next >= 5), nil
 	})
 
 	generator := factory(0)
