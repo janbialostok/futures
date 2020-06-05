@@ -43,6 +43,7 @@ type WorkerPool struct {
 	out       Future
 	kill      chan bool
 	closeLock *sync.Mutex
+	sendLock  *sync.Mutex
 }
 
 // Send pushes a FutureFunc to a channel that worker go routines poll and execute from
@@ -54,6 +55,8 @@ func (w WorkerPool) Send(fn FutureFunc) bool {
 		}
 	default:
 	}
+	w.sendLock.Lock()
+	defer w.sendLock.Unlock()
 	w.in <- fn
 	return true
 }
@@ -87,6 +90,13 @@ func (w WorkerPool) Fork(concurrency int) WorkerPoolInterface {
 	kill := make(chan bool)
 	go func() {
 		select {
+		case _, ok := <-out:
+			if !ok {
+				return
+			}
+		default:
+		}
+		select {
 		case <-kill:
 			close(out)
 		case <-w.kill:
@@ -98,6 +108,7 @@ func (w WorkerPool) Fork(concurrency int) WorkerPoolInterface {
 			in:        w.in,
 			kill:      w.kill,
 			closeLock: w.closeLock,
+			sendLock:  w.sendLock,
 		},
 		out:  out,
 		kill: kill,
@@ -180,9 +191,12 @@ func NewFuturesWorkerPool(concurrency int) WorkerPoolInterface {
 	out := make(chan Value, concurrency)
 	kill := make(chan bool)
 	closeChannelLock := sync.Mutex{}
+	sendLock := sync.Mutex{}
 
 	go func() {
 		<-kill
+		sendLock.Lock()
+		defer sendLock.Unlock()
 		close(in)
 		close(out)
 	}()
@@ -191,5 +205,5 @@ func NewFuturesWorkerPool(concurrency int) WorkerPoolInterface {
 		makeWorker(in, out, kill)
 	}
 
-	return WorkerPool{in, out, kill, &closeChannelLock}
+	return WorkerPool{in, out, kill, &closeChannelLock, &sendLock}
 }
