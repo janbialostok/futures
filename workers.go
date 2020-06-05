@@ -48,6 +48,8 @@ type WorkerPool struct {
 
 // Send pushes a FutureFunc to a channel that worker go routines poll and execute from
 func (w WorkerPool) Send(fn FutureFunc) bool {
+	w.sendLock.Lock()
+	defer w.sendLock.Unlock()
 	select {
 	case _, ok := <-w.kill:
 		if !ok {
@@ -55,8 +57,6 @@ func (w WorkerPool) Send(fn FutureFunc) bool {
 		}
 	default:
 	}
-	w.sendLock.Lock()
-	defer w.sendLock.Unlock()
 	w.in <- fn
 	return true
 }
@@ -140,7 +140,18 @@ func (n NestedWorkerPool) Send(fn FutureFunc) bool {
 		}
 	default:
 	}
-	return n.WorkerPool.Do(n.out, fn)
+	return n.WorkerPool.Send(func() (interface{}, error) {
+		result, err := fn()
+		select {
+		case _, ok := <-n.kill:
+			if !ok {
+				return skipOutChannel{}, nil
+			}
+		default:
+		}
+		n.out <- Value{result, err}
+		return skipOutChannel{}, nil
+	})
 }
 
 // Receive listens on the out channel and waits for a value to be returned from a FutureFunc execution
