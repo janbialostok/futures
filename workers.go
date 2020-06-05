@@ -77,7 +77,6 @@ func (w WorkerPool) Close() bool {
 		}
 	default:
 	}
-	w.kill <- true
 	close(w.kill)
 	return true
 }
@@ -159,7 +158,6 @@ func (n NestedWorkerPool) Close() bool {
 		}
 	default:
 	}
-	n.kill <- true
 	close(n.kill)
 	return true
 }
